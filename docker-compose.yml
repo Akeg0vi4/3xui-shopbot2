@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  3xui-shopbot:
+    build: .
+    container_name: 3xui-shopbot
+    restart: always
+    ports:
+      - "1488:1488"
+    volumes:
+      - ./users.db:/app/users.db
+      - ./backups:/app/backups
+      - ./src/shop_bot/webhook_server/templates:/app/project/src/shop_bot/webhook_server/templates   # <-- ДОБАВЬ ЭТУ СТРОКУ
+    environment:
+      - ALL_PROXY=socks5h://172.17.0.1:1080
+      - HTTPS_PROXY=socks5h://172.17.0.1:1080
+      - HTTP_PROXY=socks5h://172.17.0.1:1080
+      - no_proxy=localhost,127.0.0.1,158.160.6.38
+    network_mode: bridge
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

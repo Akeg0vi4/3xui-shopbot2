@@ -1,0 +1,27 @@
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs
+logs/
+*.log
+
+# Backups
+backups/
+*.zip
+*.tar.gz
+
+# IDE
+.idea/
+.vscode/
