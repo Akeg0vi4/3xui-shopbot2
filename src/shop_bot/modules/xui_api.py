@@ -9,6 +9,115 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
+# ========== ОБЁРТКИ ДЛЯ СОВМЕСТИМОСТИ С SCHEDULER ==========
+
+class ClientWrapper:
+    def __init__(self, client_data: Dict):
+        self.id = client_data.get('id')
+        self.email = client_data.get('email')
+        self.enable = client_data.get('enable', True)
+        self.expiry_time = client_data.get('expiryTime', 0)
+        self.uuid = client_data.get('id')
+        self.subId = client_data.get('subId')
+        self.reset = client_data.get('reset', 0)
+        self.flow = client_data.get('flow', 'xtls-rprx-vision')
+
+
+class SettingsWrapper:
+    def __init__(self, settings_data: Dict):
+        self.clients = [ClientWrapper(c) for c in settings_data.get('clients', [])]
+        self.decryption = settings_data.get('decryption', 'none')
+        self.fallbacks = settings_data.get('fallbacks', [])
+
+
+class RealitySettingsWrapper:
+    def __init__(self, reality_settings: Dict):
+        self.settings = reality_settings.get('settings', {})
+        self.serverNames = reality_settings.get('serverNames', [])
+        self.shortIds = reality_settings.get('shortIds', [])
+        self.privateKey = reality_settings.get('privateKey', '')
+        self.target = reality_settings.get('target', '')
+    
+    def get(self, key, default=None):
+        return self.settings.get(key, default)
+
+
+class StreamSettingsWrapper:
+    def __init__(self, stream_settings: Dict):
+        self.security = stream_settings.get('security', 'reality')
+        self.network = stream_settings.get('network', 'tcp')
+        self.reality_settings = RealitySettingsWrapper(stream_settings.get('realitySettings', {}))
+        self.tcpSettings = stream_settings.get('tcpSettings', {})
+        self.kcpSettings = stream_settings.get('kcpSettings', {})
+        self.tlsSettings = stream_settings.get('tlsSettings', {})
+        self.xtlsSettings = stream_settings.get('xtlsSettings', {})
+        self.externalProxy = stream_settings.get('externalProxy', [])
+
+
+class InboundWrapper:
+    def __init__(self, inbound_data: Dict, api_client=None):
+        self.id = inbound_data.get('id')
+        self.port = inbound_data.get('port')
+        self.protocol = inbound_data.get('protocol')
+        self.remark = inbound_data.get('remark')
+        self.enable = inbound_data.get('enable', True)
+        self.expiryTime = inbound_data.get('expiryTime', 0)
+        self.listen = inbound_data.get('listen', '')
+        self.tag = inbound_data.get('tag', '')
+        self.sniffing = inbound_data.get('sniffing', {})
+        
+        try:
+            settings_data = json.loads(inbound_data.get('settings', '{}'))
+            self.settings = SettingsWrapper(settings_data)
+        except:
+            self.settings = SettingsWrapper({})
+        
+        try:
+            stream_data = json.loads(inbound_data.get('streamSettings', '{}'))
+            self.stream_settings = StreamSettingsWrapper(stream_data)
+        except:
+            self.stream_settings = StreamSettingsWrapper({})
+        
+        self.api_client = api_client
+        self.inbound_data = inbound_data
+    
+    def __getattr__(self, name):
+        return self.inbound_data.get(name)
+
+
+class ApiWrapper:
+    class InboundWrapperInner:
+        def __init__(self, parent):
+            self.parent = parent
+        
+        def get_by_id(self, inbound_id: int):
+            inbound_data = self.parent.api_client.get_inbound(inbound_id)
+            if inbound_data:
+                return InboundWrapper(inbound_data, self.parent.api_client)
+            return None
+        
+        def get_list(self):
+            url = f"{self.parent.api_client.host_url}/panel/api/inbounds/list"
+            response = self.parent.api_client.session.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success'):
+                    inbounds = []
+                    for inbound_data in data.get('obj', []):
+                        inbounds.append(InboundWrapper(inbound_data, self.parent.api_client))
+                    return inbounds
+            return []
+        
+        def update(self, inbound_id: int, inbound_obj):
+            return True
+    
+    def __init__(self, api_client):
+        self.api_client = api_client
+        self.inbound = self.InboundWrapperInner(self)
+
+
+# ========== ОСНОВНОЙ КЛАСС ==========
+
 class XUIClientAPI:
     def __init__(self, host_url: str, username: str, password: str):
         self.host_url = host_url.rstrip('/')
@@ -16,7 +125,8 @@ class XUIClientAPI:
         self.username = username
         self.password = password
         self.logged_in = False
-        self.session.verify = False  # Отключаем проверку SSL
+        self.session.verify = False
+        self.inbound = None
     
     def login(self) -> bool:
         try:
@@ -29,6 +139,7 @@ class XUIClientAPI:
                 result = response.json()
                 if result.get('success'):
                     self.logged_in = True
+                    self.inbound = ApiWrapper(self).inbound
                     logger.info(f"Logged in to {self.host_url}")
                     return True
             return False
@@ -55,6 +166,7 @@ class XUIClientAPI:
         """Получает параметры Reality из инбаунда"""
         inbound = self.get_inbound(inbound_id)
         if not inbound:
+            logger.error(f"Inbound {inbound_id} not found")
             return None, None, None, None
         
         try:
@@ -69,7 +181,7 @@ class XUIClientAPI:
             short_ids = reality_settings.get('shortIds', [])
             short_id = short_ids[0] if short_ids else "a2d716d5d68b61"
             
-            logger.debug(f"Reality params from panel: pbk={public_key}, sni={sni}, sid={short_id}")
+            logger.info(f"Reality params from panel: pbk={public_key}, sni={sni}, sid={short_id}")
             return public_key, fingerprint, sni, short_id
         except Exception as e:
             logger.error(f"Failed to parse reality params: {e}")
@@ -145,6 +257,8 @@ class XUIClientAPI:
             return False
 
 
+# ========== ФУНКЦИИ ДЛЯ ВНЕШНЕГО ИСПОЛЬЗОВАНИЯ ==========
+
 def login_to_host(host_url: str, username: str, password: str, inbound_id: int):
     try:
         api = XUIClientAPI(host_url, username, password)
@@ -168,24 +282,18 @@ def get_subscription_link(user_uuid: str, host_url: str, host_name: str = None, 
         parsed_url = urlparse(host_url)
         hostname = parsed_url.hostname or "localhost"
         
-        # Используем переданные параметры или значения по умолчанию
         pbk = public_key or "w0sN_bKihovSlAzZogSjJjcYvnsNKLlc3ux28GbAZQo"
         s = sni or "www.yandex.ru"
         sid = short_id or "a2d716d5d68b61"
         fp = fingerprint or "chrome"
         
-        connection_string = (
-            f"vless://{user_uuid}@{hostname}:{port}"
-            f"?type=tcp&encryption=none&security=reality"
-            f"&pbk={pbk}&fp={fp}&sni={s}"
-            f"&sid={sid}&spx=%2F&flow=xtls-rprx-vision"
-            f"#{host_name or 'client'}"
-        )
-        
-        return connection_string
-        
+        return (f"vless://{user_uuid}@{hostname}:{port}"
+                f"?type=tcp&encryption=none&security=reality"
+                f"&pbk={pbk}&fp={fp}&sni={s}"
+                f"&sid={sid}&spx=%2F&flow=xtls-rprx-vision"
+                f"#{host_name or 'client'}")
     except Exception as e:
-        logger.error(f"Ошибка формирования VLESS-ссылки: {e}", exc_info=True)
+        logger.error(f"Ошибка формирования VLESS-ссылки: {e}")
         return f"vless://{user_uuid}@{hostname}:443?type=tcp&security=reality&pbk={public_key}&sni={sni}&sid={short_id}#{host_name or 'client'}"
 
 
@@ -204,7 +312,6 @@ async def create_or_update_key_on_host(host_name: str, email: str, days_to_add: 
     
     inbound_id = host_data['host_inbound_id']
     
-    # Получаем параметры Reality из инбаунда
     public_key, fingerprint, sni, short_id = api.get_inbound_reality_params(inbound_id)
     logger.info(f"Reality params for {host_name}: pbk={public_key}, sni={sni}, sid={short_id}")
     
@@ -247,16 +354,9 @@ async def create_or_update_key_on_host(host_name: str, email: str, days_to_add: 
         logger.error(f"Failed to update/create client {email}")
         return None
     
-    # Формируем VLESS-ссылку с параметрами из панели
     connection_string = get_subscription_link(
-        client_uuid, 
-        host_data['host_url'], 
-        host_name,
-        public_key=public_key,
-        sni=sni,
-        short_id=short_id,
-        fingerprint=fingerprint,
-        port=443
+        client_uuid, host_data['host_url'], host_name,
+        public_key=public_key, sni=sni, short_id=short_id, fingerprint=fingerprint, port=443
     )
     
     return {
@@ -283,23 +383,17 @@ async def get_key_details_from_host(key_data: dict) -> dict:
     if not user_uuid:
         return None
     
-    # Получаем параметры Reality из панели
     api = XUIClientAPI(host_db_data['host_url'], host_db_data['host_username'], host_db_data['host_pass'])
     if api.login():
         inbound_id = host_db_data['host_inbound_id']
         public_key, fingerprint, sni, short_id = api.get_inbound_reality_params(inbound_id)
     else:
+        logger.error(f"Failed to login to {host_name} for get_key_details")
         public_key, fingerprint, sni, short_id = None, None, None, None
     
     connection_string = get_subscription_link(
-        user_uuid, 
-        host_db_data['host_url'], 
-        host_name,
-        public_key=public_key,
-        sni=sni,
-        short_id=short_id,
-        fingerprint=fingerprint,
-        port=443
+        user_uuid, host_db_data['host_url'], host_name,
+        public_key=public_key, sni=sni, short_id=short_id, fingerprint=fingerprint, port=443
     )
     
     return {"connection_string": connection_string}

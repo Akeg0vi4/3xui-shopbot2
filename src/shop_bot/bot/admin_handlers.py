@@ -6,6 +6,7 @@ import re
 import html as html_escape
 from datetime import datetime, timedelta
 
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram import Bot, Router, F, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -2378,5 +2379,75 @@ def get_admin_router() -> Router:
             )
         except Exception as e:
             await message.answer(f"Ошибка: {e}")
+        # ============================================================
+    # ОБРАБОТКА ЗАЯВОК НА ОПЛАТУ (С КНОПКАМИ)
+    # ============================================================
+    
+    @admin_router.callback_query(F.data.startswith("approve_payment_"))
+    async def approve_payment(callback: types.CallbackQuery, bot: Bot):
+        """Подтверждение оплаты - начисление баланса"""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        
+        parts = callback.data.split("_")
+        user_id = int(parts[2])
+        amount = float(parts[3])
+        
+        if add_to_balance(user_id, amount):
+            await callback.message.edit_text(
+                f"✅ <b>Заявка одобрена!</b>\n\n"
+                f"👤 Пользователю {user_id}\n"
+                f"💰 Начислено {amount:.2f} RUB",
+                parse_mode="HTML"
+            )
+            
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"✅ <b>Ваш баланс пополнен!</b>\n\n"
+                    f"💰 Сумма: {amount:.2f} RUB\n\n"
+                    f"Теперь вы можете приобрести ключ или продлить подписку.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main_menu")]
+                    ])
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify user {user_id}: {e}")
+        else:
+            await callback.message.edit_text(f"❌ Ошибка: пользователь {user_id} не найден")
+        
+        await callback.answer()
+    
+    @admin_router.callback_query(F.data.startswith("decline_payment_"))
+    async def decline_payment(callback: types.CallbackQuery, bot: Bot):
+        """Отклонение заявки"""
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        
+        parts = callback.data.split("_")
+        user_id = int(parts[2])
+        amount = float(parts[3])
+        
+        await callback.message.edit_text(
+            f"❌ <b>Заявка отклонена</b>\n\n"
+            f"👤 Пользователь: {user_id}\n"
+            f"💰 Сумма: {amount:.2f} RUB",
+            parse_mode="HTML"
+        )
+        
+        try:
+            await bot.send_message(
+                user_id,
+                f"❌ <b>Ваша заявка на оплату отклонена</b>\n\n"
+                f"Пожалуйста, проверьте правильность перевода и обратитесь в поддержку.",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+        
+        await callback.answer()
 
     return admin_router

@@ -25,6 +25,7 @@ SPEEDTEST_INTERVAL_SECONDS = 8 * 3600
 _last_speedtests_run_at: datetime | None = None
 _last_backup_run_at: datetime | None = None
 
+
 def format_time_left(hours: int) -> str:
     if hours >= 24:
         days = hours // 24
@@ -41,6 +42,7 @@ def format_time_left(hours: int) -> str:
             return f"{hours} часа"
         else:
             return f"{hours} часов"
+
 
 async def send_subscription_notification(bot: Bot, user_id: int, key_id: int, time_left_hours: int, expiry_date: datetime):
     try:
@@ -64,6 +66,7 @@ async def send_subscription_notification(bot: Bot, user_id: int, key_id: int, ti
         
     except Exception as e:
         logger.error(f"Scheduler: Ошибка отправки уведомления пользователю {user_id}: {e}")
+
 
 def _cleanup_notified_users(all_db_keys: list[dict]):
     if not notified_users:
@@ -91,6 +94,7 @@ def _cleanup_notified_users(all_db_keys: list[dict]):
     
     if cleaned_users > 0 or cleaned_keys > 0:
         logger.debug(f"Scheduler: Очистка завершена. Удалено записей пользователей: {cleaned_users}, ключей: {cleaned_keys}.")
+
 
 async def check_expiring_subscriptions(bot: Bot):
     logger.debug("Scheduler: Проверяю истекающие подписки...")
@@ -123,6 +127,7 @@ async def check_expiring_subscriptions(bot: Bot):
         except Exception as e:
             logger.error(f"Scheduler: Ошибка обработки истечения для ключа {key.get('key_id')}: {e}")
 
+
 async def sync_keys_with_panels():
     logger.debug("Scheduler: Запускаю синхронизацию с XUI-панелями...")
     total_affected_records = 0
@@ -148,7 +153,9 @@ async def sync_keys_with_panels():
                 logger.error(f"Scheduler: Не удалось авторизоваться на хосте '{host_name}'. Пропускаю его.")
                 continue
             
-            full_inbound_details = api.inbound.get_by_id(inbound.id)
+            # Получаем ID инбаунда (поддержка и словаря, и объекта)
+            inbound_id = inbound.get('id') if isinstance(inbound, dict) else inbound.id
+            full_inbound_details = api.inbound.get_by_id(inbound_id)
             clients_on_server = {client.email: client for client in (full_inbound_details.settings.clients or [])}
             logger.debug(f"Scheduler: Найдено клиентов на панели '{host_name}': {len(clients_on_server)}")
 
@@ -253,6 +260,7 @@ async def sync_keys_with_panels():
             
     logger.debug(f"Scheduler: Синхронизация с XUI-панелями завершена. Затронуто записей: {total_affected_records}.")
 
+
 async def periodic_subscription_check(bot_controller: BotController):
     logger.info("Scheduler: Планировщик фоновых задач запущен.")
     await asyncio.sleep(10)
@@ -284,6 +292,7 @@ async def periodic_subscription_check(bot_controller: BotController):
         logger.info(f"Scheduler: Цикл завершён. Следующая проверка через {CHECK_INTERVAL_SECONDS} сек.")
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
+
 async def _maybe_run_periodic_speedtests():
     global _last_speedtests_run_at
     now = datetime.now()
@@ -294,6 +303,7 @@ async def _maybe_run_periodic_speedtests():
         _last_speedtests_run_at = now
     except Exception as e:
         logger.error(f"Scheduler: Ошибка запуска speedtests: {e}", exc_info=True)
+
 
 async def _run_speedtests_for_all_hosts():
     hosts = database.get_all_hosts()
@@ -324,6 +334,7 @@ async def _run_speedtests_for_all_hosts():
             logger.warning(f"Scheduler: Таймаут speedtest для хоста '{host_name}'")
         except Exception as e:
             logger.error(f"Scheduler: Ошибка выполнения speedtest для '{host_name}': {e}", exc_info=True)
+
 
 async def _maybe_run_daily_backup(bot: Bot):
     global _last_backup_run_at
